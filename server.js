@@ -1,3 +1,4 @@
+const path = require("path");
 const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
@@ -5,10 +6,15 @@ const { Server } = require("socket.io");
 const app = express();
 const server = http.createServer(app);
 
+app.use(express.static(path.join(__dirname)));
+app.get("/", (req, res) => {
+  res.sendFile(path.join(__dirname, "index.html"));
+});
+
 const io = new Server(server, {
   cors: {
     origin: "*",
-  }
+  },
 });
 
 const rooms = new Map(); // roomCode -> { players: Map<socketId, state> }
@@ -159,9 +165,6 @@ io.on("connection", (socket) => {
 });
 
 const PORT = Number(process.env.PORT) || 3000;
-app.get("/", (_, res) => {
-  res.send("Housebreaker socket server running.");
-});
 
 server.listen(PORT, () => {
   console.log("Serveur lance sur le port", PORT);

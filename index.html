@@ -271,6 +271,89 @@
         line-height: 1.35;
       }
 
+      .mobileControls {
+        position: absolute;
+        inset: 0;
+        z-index: 23;
+        pointer-events: none;
+        display: none;
+      }
+
+      body.mobileDevice .mobileControls {
+        display: block;
+      }
+
+      .mobileJoystick {
+        position: absolute;
+        left: max(14px, env(safe-area-inset-left));
+        bottom: max(14px, env(safe-area-inset-bottom));
+        width: 156px;
+        height: 156px;
+        border-radius: 50%;
+        border: 1px solid rgba(255, 255, 255, 0.25);
+        background: rgba(8, 10, 20, 0.48);
+        box-shadow: 0 10px 26px rgba(0, 0, 0, 0.4);
+        pointer-events: auto;
+        touch-action: none;
+      }
+
+      .mobileJoystickKnob {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: 64px;
+        height: 64px;
+        margin-left: -32px;
+        margin-top: -32px;
+        border-radius: 50%;
+        border: 1px solid rgba(255, 255, 255, 0.28);
+        background: rgba(140, 242, 255, 0.42);
+      }
+
+      .mobileActions {
+        position: absolute;
+        right: max(14px, env(safe-area-inset-right));
+        bottom: max(14px, env(safe-area-inset-bottom));
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 84px));
+        gap: 10px;
+        pointer-events: auto;
+      }
+
+      .mobileBtn {
+        border: 1px solid rgba(255, 255, 255, 0.22);
+        border-radius: 13px;
+        background: rgba(8, 10, 20, 0.62);
+        color: var(--ink);
+        font: inherit;
+        font-size: 13px;
+        font-weight: 700;
+        min-height: 52px;
+        padding: 8px;
+        touch-action: manipulation;
+      }
+
+      @media (max-width: 780px) {
+        .mobileJoystick {
+          width: 144px;
+          height: 144px;
+        }
+        .mobileJoystickKnob {
+          width: 58px;
+          height: 58px;
+          margin-left: -29px;
+          margin-top: -29px;
+        }
+        .mobileActions {
+          grid-template-columns: repeat(2, minmax(0, 78px));
+          gap: 8px;
+        }
+        .mobileBtn {
+          min-height: 48px;
+          font-size: 12px;
+        }
+      }
+
       .overlay {
         position: fixed;
         inset: 0;
@@ -728,6 +811,7 @@
         <button id="helpBtn" class="helpBtn" type="button" aria-expanded="false" aria-controls="helpPanel">Touches</button>
         <div id="helpPanel" class="helpPanel" aria-hidden="true">
           <h3>Touches</h3>
+          <p id="controlHint" style="margin: 0 0 8px; color: rgba(140, 242, 255, 0.88); font-size: 12px">Mode PC (clavier / souris).</p>
           <ul>
             <li>Deplacement: <kbd>WASD</kbd> ou <kbd>Fleches</kbd></li>
             <li>Interagir (entrer/sortir/voler): <kbd>E</kbd></li>
@@ -740,6 +824,17 @@
             Objectif: voler du butin dans les maisons. Plus tu enchaines les maisons, plus le multiplicateur augmente (x2, x4, x8...).
             Pour securiser ton score, va sur la zone <b>SORTIE</b> (dans la rue).
           </p>
+        </div>
+        <div id="mobileControls" class="mobileControls" aria-hidden="true">
+          <div id="mobileJoystick" class="mobileJoystick">
+            <div id="mobileJoystickKnob" class="mobileJoystickKnob"></div>
+          </div>
+          <div class="mobileActions">
+            <button id="mInteractBtn" class="mobileBtn" type="button">Interagir</button>
+            <button id="mHideBtn" class="mobileBtn" type="button">Cacher</button>
+            <button id="mLockpickBtn" class="mobileBtn" type="button">Crocheter</button>
+            <button id="mRestartBtn" class="mobileBtn" type="button">Restart</button>
+          </div>
         </div>
         <div class="overlay interactive" id="nameOverlay" style="display: none">
           <div class="banner nameCard">
@@ -895,6 +990,14 @@
         const overlayMenuBtn = document.getElementById("overlayMenuBtn");
         const helpBtn = document.getElementById("helpBtn");
         const helpPanel = document.getElementById("helpPanel");
+        const controlHint = document.getElementById("controlHint");
+        const mobileControls = document.getElementById("mobileControls");
+        const mobileJoystick = document.getElementById("mobileJoystick");
+        const mobileJoystickKnob = document.getElementById("mobileJoystickKnob");
+        const mInteractBtn = document.getElementById("mInteractBtn");
+        const mHideBtn = document.getElementById("mHideBtn");
+        const mLockpickBtn = document.getElementById("mLockpickBtn");
+        const mRestartBtn = document.getElementById("mRestartBtn");
         const nameOverlay = document.getElementById("nameOverlay");
         const nameInput = document.getElementById("nameInput");
         const nameOkBtn = document.getElementById("nameOkBtn");
@@ -928,6 +1031,32 @@
         const mpBackBtn = document.getElementById("mpBackBtn");
 
         const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
+        let isMobileDevice = false;
+        let mobileMoveX = 0;
+        let mobileMoveY = 0;
+
+        function detectMobileDevice() {
+          const coarse = !!(window.matchMedia && window.matchMedia("(pointer: coarse)").matches);
+          const touchCapable =
+            (typeof navigator !== "undefined" && navigator.maxTouchPoints > 0) ||
+            "ontouchstart" in window;
+          return coarse || touchCapable;
+        }
+
+        function applyDeviceMode() {
+          isMobileDevice = detectMobileDevice();
+          document.body.classList.toggle("mobileDevice", isMobileDevice);
+          if (mobileControls) mobileControls.setAttribute("aria-hidden", isMobileDevice ? "false" : "true");
+          if (controlHint) {
+            controlHint.textContent = isMobileDevice
+              ? "Mode mobile (joystick tactile + boutons)."
+              : "Mode PC (clavier / souris).";
+          }
+          if (!isMobileDevice) {
+            mobileMoveX = 0;
+            mobileMoveY = 0;
+          }
+        }
 
         const audioSettings = (() => {
           const def = { master: 0.65, music: 1.0, sfx: 1.0 };
@@ -2563,6 +2692,115 @@
         );
         window.addEventListener("keyup", (e) => setKey(e.code, false));
 
+        if (window.matchMedia) {
+          const coarseMq = window.matchMedia("(pointer: coarse)");
+          if (typeof coarseMq.addEventListener === "function") {
+            coarseMq.addEventListener("change", applyDeviceMode);
+          } else if (typeof coarseMq.addListener === "function") {
+            coarseMq.addListener(applyDeviceMode);
+          }
+        }
+        window.addEventListener("resize", applyDeviceMode);
+        applyDeviceMode();
+
+        function bindMobileTap(btn, action) {
+          if (!btn) return;
+          const run = (ev) => {
+            ev.preventDefault();
+            resumeAudioFromGesture();
+            if (!isMobileDevice) return;
+            action();
+          };
+          btn.addEventListener("click", run);
+          btn.addEventListener("touchstart", run, { passive: false });
+        }
+
+        bindMobileTap(mInteractBtn, () => interact());
+        bindMobileTap(mHideBtn, () => toggleHide());
+        bindMobileTap(mLockpickBtn, () => lockpickTry());
+        bindMobileTap(mRestartBtn, () => {
+          if (!profile.name) {
+            setNameOpen(true);
+            showNameError("Choisis un pseudo avant de jouer.");
+          } else {
+            restart();
+          }
+        });
+
+        if (mobileJoystick && mobileJoystickKnob) {
+          const radius = 54;
+          const resetJoystick = () => {
+            mobileMoveX = 0;
+            mobileMoveY = 0;
+            mobileJoystickKnob.style.transform = "translate(0px, 0px)";
+          };
+          const handleMove = (clientX, clientY) => {
+            const rect = mobileJoystick.getBoundingClientRect();
+            const cx = rect.left + rect.width * 0.5;
+            const cy = rect.top + rect.height * 0.5;
+            let dx = clientX - cx;
+            let dy = clientY - cy;
+            const len = Math.hypot(dx, dy);
+            if (len > radius && len > 0) {
+              dx = (dx / len) * radius;
+              dy = (dy / len) * radius;
+            }
+            mobileMoveX = dx / radius;
+            mobileMoveY = dy / radius;
+            mobileJoystickKnob.style.transform = `translate(${dx}px, ${dy}px)`;
+          };
+
+          let touchId = null;
+          mobileJoystick.addEventListener(
+            "touchstart",
+            (ev) => {
+              if (!isMobileDevice || touchId !== null) return;
+              const t = ev.changedTouches[0];
+              touchId = t.identifier;
+              resumeAudioFromGesture();
+              handleMove(t.clientX, t.clientY);
+              ev.preventDefault();
+            },
+            { passive: false }
+          );
+          mobileJoystick.addEventListener(
+            "touchmove",
+            (ev) => {
+              if (!isMobileDevice || touchId === null) return;
+              for (const t of ev.changedTouches) {
+                if (t.identifier !== touchId) continue;
+                handleMove(t.clientX, t.clientY);
+                ev.preventDefault();
+                break;
+              }
+            },
+            { passive: false }
+          );
+          const onTouchEnd = (ev) => {
+            if (touchId === null) return;
+            for (const t of ev.changedTouches) {
+              if (t.identifier !== touchId) continue;
+              touchId = null;
+              resetJoystick();
+              break;
+            }
+          };
+          mobileJoystick.addEventListener("touchend", onTouchEnd);
+          mobileJoystick.addEventListener("touchcancel", onTouchEnd);
+          mobileJoystick.addEventListener("pointerdown", (ev) => {
+            if (!isMobileDevice) return;
+            resumeAudioFromGesture();
+            mobileJoystick.setPointerCapture(ev.pointerId);
+            handleMove(ev.clientX, ev.clientY);
+          });
+          mobileJoystick.addEventListener("pointermove", (ev) => {
+            if (!isMobileDevice || ev.buttons === 0) return;
+            handleMove(ev.clientX, ev.clientY);
+          });
+          mobileJoystick.addEventListener("pointerup", resetJoystick);
+          mobileJoystick.addEventListener("pointercancel", resetJoystick);
+        }
+
         const rng = makeRng(0xdecafbad);
 
         const camera = { x: 0, y: 0, zoom: 1 };
@@ -3329,6 +3567,10 @@
           if (isDown("KeyS") || isDown("ArrowDown")) my += 1;
           if (isDown("KeyA") || isDown("ArrowLeft")) mx -= 1;
           if (isDown("KeyD") || isDown("ArrowRight")) mx += 1;
+          if (isMobileDevice) {
+            mx += mobileMoveX;
+            my += mobileMoveY;
+          }
           const len = Math.hypot(mx, my);
           if (len > 0) {
             mx /= len;

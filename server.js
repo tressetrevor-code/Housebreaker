@@ -107,6 +107,12 @@ io.on("connection", (socket) => {
     emitRoomUpdate(roomCode);
   });
 
+  socket.on("leave_room", (_, ack) => {
+    const hadRoom = socketToRoom.has(socket.id);
+    leaveCurrentRoom(socket);
+    if (typeof ack === "function") ack({ ok: true, left: hadRoom });
+  });
+
   socket.on("player_state", (data) => {
     const roomCode = String(
       data && data.roomCode ? data.roomCode : socketToRoom.get(socket.id) || ""

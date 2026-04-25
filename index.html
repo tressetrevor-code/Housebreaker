@@ -44,6 +44,34 @@
         gap: 12px;
       }
 
+      body.mobileLandscape {
+        place-items: stretch;
+      }
+
+      body.mobileLandscape .wrap {
+        width: 100vw;
+        height: 100vh;
+        gap: 6px;
+        padding: 6px;
+      }
+
+      body.mobileLandscape .help,
+      body.mobileLandscape .topbar {
+        display: none;
+      }
+
+      body.mobileLandscape .canvasCard {
+        height: calc(100vh - 12px);
+        padding: 6px;
+        border-radius: 12px;
+      }
+
+      body.mobileLandscape canvas {
+        width: min(calc(100vw - 24px), calc((100vh - 24px) * 1.6666667));
+        max-height: calc(100vh - 24px);
+        margin: 0 auto;
+      }
+
       .topbar {
         display: flex;
         align-items: center;
@@ -819,6 +847,7 @@
             <li>Se cacher / ressortir (dans une maison, sur un placard): <kbd>H</kbd></li>
             <li>Recommencer: <kbd>R</kbd></li>
             <li>Abandonner la run: <kbd>X</kbd></li>
+            <li>Multijoueur: <kbd>Q</kbd> quitte le salon</li>
           </ul>
           <p>
             Objectif: voler du butin dans les maisons. Plus tu enchaines les maisons, plus le multiplicateur augmente (x2, x4, x8...).
@@ -880,6 +909,7 @@
             <div class="tabRow">
               <button id="lbTabTotal" class="tabBtn" type="button">Maisons cambriolées</button>
               <button id="lbTabStreak" class="tabBtn" type="button">Meilleure série</button>
+              <button id="lbTabTeamLoot" class="tabBtn" type="button">Butin équipe</button>
             </div>
             <div id="lbList" class="lbList"></div>
             <div class="btnRow">
@@ -950,6 +980,7 @@
             </div>
             <div id="mpLog" class="mpLog"></div>
             <div class="btnRow" style="margin-top: 10px">
+              <button id="mpLeaveBtn" class="btn big" type="button">Quitter salon</button>
               <button id="mpBackBtn" class="btn big" type="button">Retour</button>
             </div>
           </div>
@@ -1015,6 +1046,7 @@
         const leaderboardOverlay = document.getElementById("leaderboardOverlay");
         const lbTabTotal = document.getElementById("lbTabTotal");
         const lbTabStreak = document.getElementById("lbTabStreak");
+        const lbTabTeamLoot = document.getElementById("lbTabTeamLoot");
         const lbList = document.getElementById("lbList");
         const lbBackBtn = document.getElementById("lbBackBtn");
         const settingsOverlay = document.getElementById("settingsOverlay");
@@ -1045,7 +1077,9 @@
 
         function applyDeviceMode() {
           isMobileDevice = detectMobileDevice();
+          const isLandscape = !!(window.matchMedia && window.matchMedia("(orientation: landscape)").matches);
           document.body.classList.toggle("mobileDevice", isMobileDevice);
+          document.body.classList.toggle("mobileLandscape", isMobileDevice && isLandscape);
           if (mobileControls) mobileControls.setAttribute("aria-hidden", isMobileDevice ? "false" : "true");
           if (controlHint) {
             controlHint.textContent = isMobileDevice
@@ -1122,13 +1156,14 @@
         }
 
         const profile = (() => {
-          const def = { name: "", totalHouses: 0, bestStreak: 0, worldBestLoot: [0], cheatUnlockedAllWorlds: false };
+          const def = { name: "", totalHouses: 0, bestStreak: 0, bestTeamLoot: 0, worldBestLoot: [0], cheatUnlockedAllWorlds: false };
           const p = loadJson(PROFILE_KEY, def);
           const rawWorldBestLoot = Array.isArray(p?.worldBestLoot) ? p.worldBestLoot : def.worldBestLoot;
           return {
             name: typeof p?.name === "string" ? p.name : "",
             totalHouses: Number.isFinite(p?.totalHouses) ? Math.max(0, p.totalHouses | 0) : 0,
             bestStreak: Number.isFinite(p?.bestStreak) ? Math.max(0, p.bestStreak | 0) : 0,
+            bestTeamLoot: Number.isFinite(p?.bestTeamLoot) ? Math.max(0, p.bestTeamLoot | 0) : 0,
             worldBestLoot: rawWorldBestLoot.map((v) => (Number.isFinite(v) ? Math.max(0, v | 0) : 0)),
             cheatUnlockedAllWorlds: p?.cheatUnlockedAllWorlds === true,
           };
@@ -1241,17 +1276,31 @@
           return fresh;
         })();
 
-        let lbMode = "total"; // total | streak
+        let lbMode = "total"; // total | streak | teamLoot
 
         function getLeaderboardValue(entry) {
-          return lbMode === "streak" ? entry.bestStreak : entry.totalHouses;
+          if (lbMode === "streak") return entry.bestStreak;
+          if (lbMode === "teamLoot") return entry.teamLoot || 0;
+          return entry.totalHouses;
         }
 
         function renderLeaderboard() {
           if (!lbList) return;
-          const me = { name: profile.name || "Toi", totalHouses: profile.totalHouses, bestStreak: profile.bestStreak, isMe: true };
+          const me = {
+            name: profile.name || "Toi",
+            totalHouses: profile.totalHouses,
+            bestStreak: profile.bestStreak,
+            teamLoot: profile.bestTeamLoot,
+            isMe: true,
+          };
           const entries = bots
-            .map((b) => ({ name: b.name, totalHouses: b.totalHouses | 0, bestStreak: b.bestStreak | 0, isMe: false }))
+            .map((b) => ({
+              name: b.name,
+              totalHouses: b.totalHouses | 0,
+              bestStreak: b.bestStreak | 0,
+              teamLoot: Number.isFinite(b.teamLoot) ? b.teamLoot | 0 : (b.totalHouses | 0) * 3 + ((b.bestStreak | 0) * 2 + 6),
+              isMe: false,
+            }))
             .concat([me]);
 
           entries.sort((a, b) => {
@@ -1263,8 +1312,9 @@
 
           lbTabTotal.classList.toggle("active", lbMode === "total");
           lbTabStreak.classList.toggle("active", lbMode === "streak");
+          if (lbTabTeamLoot) lbTabTeamLoot.classList.toggle("active", lbMode === "teamLoot");
 
-          const label = lbMode === "streak" ? "maisons (serie)" : "maisons";
+          const label = lbMode === "streak" ? "maisons (serie)" : lbMode === "teamLoot" ? "butin equipe" : "maisons";
           let html = "";
           for (let i = 0; i < entries.length; i++) {
             const e = entries[i];
@@ -1505,6 +1555,12 @@
           lbMode = "streak";
           renderLeaderboard();
         });
+        if (lbTabTeamLoot) {
+          lbTabTeamLoot.addEventListener("click", () => {
+            lbMode = "teamLoot";
+            renderLeaderboard();
+          });
+        }
         lbBackBtn.addEventListener("click", () => {
           setLeaderboardOpen(false);
           setMenuOpen(true);
@@ -2652,6 +2708,9 @@
               if (e.code === "Space") lockpickTry();
               if (e.code === "KeyH") toggleHide();
               if (e.code === "KeyX") abandonRun();
+              if (e.code === "KeyQ" && multiplayerOpen && typeof window.__cambriolageMpLeaveRoom === "function") {
+                window.__cambriolageMpLeaveRoom();
+              }
               if (e.code === "KeyR") {
                 if (!profile.name) {
                   setNameOpen(true);
@@ -2820,6 +2879,7 @@
 
         let mpLastSendAt = 0;
         let mpLastSentState = null;
+        let mpHunterSyncLastAt = 0;
 
         function getMpBridge() {
           const b = window.__cambriolageMpBridge;
@@ -2836,6 +2896,7 @@
             x: player.x,
             y: player.y,
             r: player.r,
+            loot: player.loot | 0,
             inCar: !!player.inCar,
             hidden: !!player.hidden,
             worldMode,
@@ -2858,6 +2919,105 @@
           mpLastSentState = state;
         }
 
+        function getTeamLootTotal() {
+          const bridge = getMpBridge();
+          if (!bridge || !bridge.currentRoom) return player.loot | 0;
+          let total = player.loot | 0;
+          if (bridge.players && bridge.players.size > 0) {
+            for (const rp of bridge.players.values()) {
+              const loot = Number(rp && rp.loot);
+              if (!Number.isFinite(loot)) continue;
+              total += Math.max(0, loot | 0);
+            }
+          }
+          return Math.max(0, total | 0);
+        }
+
+        function emitMpAction(type, payload = {}) {
+          const bridge = getMpBridge();
+          if (!bridge || !bridge.currentRoom || typeof bridge.sendAction !== "function") return;
+          bridge.sendAction({ type, ...payload, t: Date.now() });
+        }
+
+        function isMpHunterAuthority() {
+          const bridge = getMpBridge();
+          if (!bridge || !bridge.currentRoom || !bridge.localId) return true;
+          const ids = [bridge.localId];
+          if (bridge.players && bridge.players.size > 0) {
+            for (const id of bridge.players.keys()) ids.push(String(id));
+          }
+          ids.sort();
+          return ids[0] === bridge.localId;
+        }
+
+        function serializeHuntersState() {
+          return hunters.map((h) => ({
+            x: h.x,
+            y: h.y,
+            r: h.r,
+            state: h.state,
+            headingX: h.headingX,
+            headingY: h.headingY,
+            speedPatrol: h.speedPatrol,
+            speedChase: h.speedChase,
+            viewDist: h.viewDist,
+            patrolX: h.patrolX,
+            patrolY: h.patrolY,
+            wait: h.wait,
+            lastSeenX: h.lastSeenX,
+            lastSeenY: h.lastSeenY,
+            lostTime: h.lostTime,
+            canCatchHidden: h.canCatchHidden,
+            inHouse: h.inHouse,
+            houseId: h.houseId,
+          }));
+        }
+
+        function applyRemoteHuntersState(list) {
+          if (!Array.isArray(list)) return;
+          if (list.length > hunters.length) {
+            for (let i = hunters.length; i < list.length; i++) {
+              hunters.push(makeHunter(player.x, player.y));
+            }
+          } else if (list.length < hunters.length) {
+            hunters.length = list.length;
+          }
+          for (let i = 0; i < list.length; i++) {
+            const src = list[i] || {};
+            const h = hunters[i];
+            h.x = Number(src.x);
+            h.y = Number(src.y);
+            h.r = Number(src.r) || 12;
+            h.state = src.state ? String(src.state) : "patrol";
+            h.headingX = Number(src.headingX) || 0;
+            h.headingY = Number(src.headingY) || 1;
+            h.speedPatrol = Number(src.speedPatrol) || h.speedPatrol;
+            h.speedChase = Number(src.speedChase) || h.speedChase;
+            h.viewDist = Number(src.viewDist) || h.viewDist;
+            h.patrolX = Number(src.patrolX) || h.x;
+            h.patrolY = Number(src.patrolY) || h.y;
+            h.wait = Number(src.wait) || 0;
+            h.lastSeenX = Number(src.lastSeenX) || h.x;
+            h.lastSeenY = Number(src.lastSeenY) || h.y;
+            h.lostTime = Number(src.lostTime) || 0;
+            h.canCatchHidden = src.canCatchHidden !== false;
+            h.inHouse = src.inHouse === true;
+            h.houseId = src.houseId ?? null;
+            h.isHunter = true;
+          }
+        }
+
+        function publishHuntersState(nowMs) {
+          const bridge = getMpBridge();
+          if (!bridge || !bridge.currentRoom) return;
+          if (worldMode !== "street" || gameState !== "playing") return;
+          if (!isMpHunterAuthority()) return;
+          const minDelayMs = 85; // ~12/s
+          if (nowMs - mpHunterSyncLastAt < minDelayMs) return;
+          emitMpAction("team_hunters_state", { hunters: serializeHuntersState() });
+          mpHunterSyncLastAt = nowMs;
+        }
+
         function makeEnemy(x, y, role = "red") {
           const speedScale = street?.enemySpeedScale ?? 1;
           const isBlue = role === "blue";
@@ -2873,8 +3033,8 @@
             lastY: y,
             stuckTime: 0,
             canCatchHidden: !isBlue,
-            speedPatrol: (isBlue ? 100 : 80 + rng() * 18) * speedScale,
-            speedChase: (isBlue ? 150 : 120 + rng() * 20) * speedScale,
+            speedPatrol: (isBlue ? 92 : 80 + rng() * 18) * speedScale,
+            speedChase: (isBlue ? 138 : 120 + rng() * 20) * speedScale,
             viewDist: isBlue ? 0 : 220,
             fov: (110 * Math.PI) / 180,
             patrolX: x,
@@ -3034,8 +3194,9 @@
           const modeRoll = rng();
           let blueCount = 0;
           if (modeRoll < 0.34) blueCount = 0; // full red house
-          else if (modeRoll < 0.64) blueCount = count; // full blue house
+          else if (modeRoll < 0.64) blueCount = count - 1; // mostly blue, but keep at least one red
           else blueCount = 1 + Math.floor(rng() * Math.max(1, count - 1)); // mixed
+          if (blueCount > 0) blueCount = clamp(blueCount, 1, Math.max(1, count - 1));
           hs.enemies = [];
           for (let i = 0; i < count; i++) {
             const s = hs.interior.enemyStarts[i % hs.interior.enemyStarts.length];
@@ -3081,6 +3242,34 @@
           const n = Math.max(0, count | 0);
           for (let i = 0; i < n; i++) spawnHunter();
         }
+
+        function syncTeamHunterSpawn(count = 1, reasonText = "", fromRemote = false) {
+          spawnHuntersBurst(count);
+          if (reasonText) showMessage(reasonText, 1.15);
+          if (!fromRemote) {
+            emitMpAction("team_hunters_spawn", { count, reasonText });
+          }
+        }
+
+        window.__cambriolageMpOnAction = (data) => {
+          const type = data && data.type ? String(data.type) : "";
+          if (type === "team_hunters_spawn") {
+            const count = Math.max(0, Number(data && data.count) | 0);
+            const reasonText = data && data.reasonText ? String(data.reasonText) : "Alerte equipe: chasseurs arrives.";
+            if (count > 0) syncTeamHunterSpawn(count, reasonText, true);
+            return;
+          }
+          if (type === "team_hunters_state") {
+            if (!isMpHunterAuthority() && worldMode === "street") {
+              applyRemoteHuntersState(data && data.hunters);
+            }
+            return;
+          }
+          if (type === "team_loot_tick") {
+            // Le score equipe est derive des etats joueurs recus; cet event sert surtout au log.
+            return;
+          }
+        };
 
         function randomizeLockpickZone() {
           // Target gets a bit smaller each success.
@@ -3237,7 +3426,7 @@
             sfxPickBad();
             if (lockpick.kind === "house") {
               cancelLockpick("Echec ! Chasseur libere...", 1.0);
-              spawnHunter();
+              syncTeamHunterSpawn(1, "Echec de crochetage: un chasseur arrive.");
             } else {
               cancelLockpick("Echec du demarrage", 0.9);
             }
@@ -3277,7 +3466,7 @@
           houseEnterScore = player.loot;
 
           // Each exit with new loot spawns a new green hunter at the end of the street (wanted level).
-          if (gained) spawnHunter();
+          if (gained) syncTeamHunterSpawn(1, "Butin repere: un chasseur supplementaire.");
 
           // Multiplicateur: x1 (maison 1) -> x2 (maison 2) -> x4 (maison 3) ...
           if (gained && !hs.robbed) {
@@ -3366,6 +3555,7 @@
           lockpick.stage = 0;
           spottedCooldown = 0;
           pendingHunterRespawns.length = 0;
+          mpHunterSyncLastAt = 0;
 
           player.x = street.playerStart.x;
           player.y = street.playerStart.y;
@@ -3374,6 +3564,7 @@
           player.loot = 0;
           player.stepCarry = 0;
           player.carStepCarry = 0;
+          emitMpAction("team_loot_tick", { loot: 0, gain: 0 });
 
           gameState = "playing";
           setOverlay(false);
@@ -3449,6 +3640,7 @@
             player.loot += runMultiplier;
             sfxPickup();
             stolen = true;
+            emitMpAction("team_loot_tick", { loot: player.loot | 0, gain: runMultiplier | 0 });
             // Mark the house as cleared once all items are taken.
             if (level.items.every((a) => a.taken)) {
               const hs = getHouseById(activeHouseId);
@@ -3620,14 +3812,117 @@
           return { vx: ux * step, vy: uy * step, reached: step >= d - 0.1 };
         }
 
+        function buildBlueDistanceField() {
+          if (!level) return null;
+          const field = new Int16Array(GRID_W * GRID_H);
+          field.fill(-1);
+          const ex = level.exitTile.tx | 0;
+          const ey = level.exitTile.ty | 0;
+          if (ex < 0 || ey < 0 || ex >= GRID_W || ey >= GRID_H) return field;
+          if (level.grid[ey][ex] === 1) return field;
+          const qx = new Int16Array(GRID_W * GRID_H);
+          const qy = new Int16Array(GRID_W * GRID_H);
+          let head = 0;
+          let tail = 0;
+          qx[tail] = ex;
+          qy[tail] = ey;
+          tail++;
+          field[ey * GRID_W + ex] = 0;
+          while (head < tail) {
+            const x = qx[head];
+            const y = qy[head];
+            head++;
+            const base = field[y * GRID_W + x];
+            const dirs = [
+              [1, 0],
+              [-1, 0],
+              [0, 1],
+              [0, -1],
+            ];
+            for (const d of dirs) {
+              const nx = x + d[0];
+              const ny = y + d[1];
+              if (nx < 0 || ny < 0 || nx >= GRID_W || ny >= GRID_H) continue;
+              const nidx = ny * GRID_W + nx;
+              if (field[nidx] !== -1) continue;
+              if (level.grid[ny][nx] === 1) continue;
+              field[nidx] = base + 1;
+              qx[tail] = nx;
+              qy[tail] = ny;
+              tail++;
+            }
+          }
+          return field;
+        }
+
+        function getBlueChaseTarget(enemy, field) {
+          if (!level || !field) return { x: enemy.x, y: enemy.y };
+          const tx = clamp(Math.floor(enemy.x / TILE_SIZE), 0, GRID_W - 1) | 0;
+          const ty = clamp(Math.floor(enemy.y / TILE_SIZE), 0, GRID_H - 1) | 0;
+          const idx = ty * GRID_W + tx;
+          const cur = field[idx];
+          const ptx = clamp(Math.floor(player.x / TILE_SIZE), 0, GRID_W - 1) | 0;
+          const pty = clamp(Math.floor(player.y / TILE_SIZE), 0, GRID_H - 1) | 0;
+
+          let bestX = tx;
+          let bestY = ty;
+          let bestScore = Number.POSITIVE_INFINITY;
+          const dirs = [
+            [0, 0],
+            [1, 0],
+            [-1, 0],
+            [0, 1],
+            [0, -1],
+          ];
+          for (const d of dirs) {
+            const nx = tx + d[0];
+            const ny = ty + d[1];
+            if (nx < 0 || ny < 0 || nx >= GRID_W || ny >= GRID_H) continue;
+            if (level.grid[ny][nx] === 1) continue;
+            const nidx = ny * GRID_W + nx;
+            const distToExit = field[nidx];
+            if (distToExit < 0) continue;
+            const dpx = nx - ptx;
+            const dpy = ny - pty;
+            const dPlayer = Math.hypot(dpx, dpy);
+            const playerPenalty = dPlayer < 2.2 ? (2.2 - dPlayer) * 6.5 : 0;
+            const score = distToExit + playerPenalty;
+            if (score < bestScore) {
+              bestScore = score;
+              bestX = nx;
+              bestY = ny;
+            }
+          }
+
+          if (cur < 0 && bestScore === Number.POSITIVE_INFINITY) {
+            return {
+              x: level.exitTile.tx * TILE_SIZE + TILE_SIZE * 0.5,
+              y: level.exitTile.ty * TILE_SIZE + TILE_SIZE * 0.5,
+            };
+          }
+
+          return {
+            x: bestX * TILE_SIZE + TILE_SIZE * 0.5,
+            y: bestY * TILE_SIZE + TILE_SIZE * 0.5,
+          };
+        }
+
         function updateEnemies(dt) {
+          const blueField = buildBlueDistanceField();
           for (const enemy of enemies) {
             if (enemy.role === "blue") {
               const exitX = level.exitTile.tx * TILE_SIZE + TILE_SIZE * 0.5;
               const exitY = level.exitTile.ty * TILE_SIZE + TILE_SIZE * 0.5;
-              const fleeTargetX = exitX;
-              const fleeTargetY = exitY - 6;
-              const { vx, vy } = steerTo(enemy, fleeTargetX, fleeTargetY, enemy.speedChase, dt);
+              const next = getBlueChaseTarget(enemy, blueField);
+              let { vx, vy } = steerTo(enemy, next.x, next.y, enemy.speedChase, dt);
+              const pdx = enemy.x - player.x;
+              const pdy = enemy.y - player.y;
+              const pDist = Math.hypot(pdx, pdy);
+              if (pDist > 1 && pDist < 105) {
+                const repel = ((105 - pDist) / 105) * enemy.speedChase * dt * 0.7;
+                vx += (pdx / pDist) * repel;
+                vy += (pdy / pDist) * repel;
+              }
               moveBodyWithCollisions(enemy, vx, vy);
               enemy.state = "flee";
 
@@ -3635,8 +3930,7 @@
               if (escaped && !enemy.escaped) {
                 enemy.escaped = true;
                 sfxImpact();
-                spawnHuntersBurst(10);
-                showMessage("Un civil s'est echappe ! 10 chasseurs arrivent...", 1.2);
+                syncTeamHunterSpawn(10, "Un civil s'est echappe ! 10 chasseurs arrivent...");
               }
               continue;
             }
@@ -3847,11 +4141,13 @@
               if (crushed > 0) {
                 sfxSplash();
                 totalCarCrushes += crushed;
+                // Les verts ecrases reviennent en nombre double apres un delai.
+                pendingHunterRespawns.push({ t: 10, count: crushed * 2 });
                 if (activeCarIndex >= 0 && street?.deco?.[activeCarIndex]?.type === "car") {
                   const c = street.deco[activeCarIndex];
                   c.crushed = (c.crushed || 0) + crushed;
                 }
-                showMessage(`Ecrases: ${crushed}. Total voiture: ${Math.min(totalCarCrushes, 10)}/10`, 1.1);
+                showMessage(`Ecrases: ${crushed}. Respawn x2 dans 10s. Total voiture: ${Math.min(totalCarCrushes, 10)}/10`, 1.1);
               }
               if (totalCarCrushes >= 10) {
                 if (activeCarIndex >= 0 && street?.deco?.[activeCarIndex]?.type === "car") {
@@ -3887,10 +4183,14 @@
             ensureWorldProgressSize();
             const worldId = street?.worldId ?? selectedWorldId;
             profile.worldBestLoot[worldId] = Math.max(profile.worldBestLoot[worldId] || 0, player.loot | 0);
+            const teamLoot = getTeamLootTotal();
+            profile.bestTeamLoot = Math.max(profile.bestTeamLoot || 0, teamLoot | 0);
             saveProfile();
             sfxWin();
-            setOverlay(true, "Echappe !", `Score securise: ${player.loot}. Rejoue ou retourne au menu.`);
+            const teamTxt = getMpBridge()?.currentRoom ? ` | Butin equipe: ${teamLoot}` : "";
+            setOverlay(true, "Echappe !", `Score securise: ${player.loot}${teamTxt}. Rejoue ou retourne au menu.`);
             renderWorldButtons();
+            renderLeaderboard();
             showMessage("");
           }
         }
@@ -4792,7 +5092,13 @@
         }
 
         function updateHud() {
-          hudItems.innerHTML = `Score: <b>${player.loot}</b>`;
+          const bridge = getMpBridge();
+          const teamLoot = getTeamLootTotal();
+          if (bridge && bridge.currentRoom) {
+            hudItems.innerHTML = `Score: <b>${player.loot}</b> | Equipe: <b>${teamLoot}</b>`;
+          } else {
+            hudItems.innerHTML = `Score: <b>${player.loot}</b>`;
+          }
           hudMult.textContent = `x${runMultiplier}`;
           const statusText = player.inCar ? "Voiture x2" : player.hidden ? "Oui" : "Non";
           hudHidden.innerHTML = `Cache: <b>${statusText}</b>`;
@@ -4853,9 +5159,18 @@
           if (gameState === "playing" && !uiPaused) {
             updatePlayer(dt);
             if (worldMode === "house") updateEnemies(dt);
-            else updateHunters(dt);
+            else {
+              const bridge = getMpBridge();
+              const inMpRoom = !!(bridge && bridge.currentRoom);
+              if (!inMpRoom || isMpHunterAuthority()) updateHunters(dt);
+            }
             updateLockpick(dt);
             if (worldMode === "street" && pendingHunterRespawns.length > 0) {
+              const bridge = getMpBridge();
+              const inMpRoom = !!(bridge && bridge.currentRoom);
+              if (inMpRoom && !isMpHunterAuthority()) {
+                pendingHunterRespawns.length = 0;
+              }
               for (let i = pendingHunterRespawns.length - 1; i >= 0; i--) {
                 const p = pendingHunterRespawns[i];
                 p.t -= dt;
@@ -4869,6 +5184,7 @@
 
           updateAudio(dt);
           publishLocalPlayerState(now);
+          publishHuntersState(now);
           drawWorld();
           drawFogOfWar();
           drawLockpickUi();
@@ -4890,6 +5206,7 @@
 
         const createBtn = document.getElementById("mpCreateBtn");
         const joinBtn = document.getElementById("mpJoinBtn");
+        const leaveBtn = document.getElementById("mpLeaveBtn");
         const sendBtn = document.getElementById("mpSendBtn");
         const roomInput = document.getElementById("mpRoomInput");
         const chatInput = document.getElementById("mpChatInput");
@@ -4948,6 +5265,19 @@
           }
         }
 
+        function leaveRoom(showLog = true) {
+          if (!currentRoom) {
+            if (showLog) addLog("Aucune room a quitter.");
+            return;
+          }
+          const oldRoom = currentRoom;
+          socket.emit("leave_room", {}, () => {
+            setRoom("");
+            if (showLog) addLog("Tu as quitte la room " + oldRoom + ".");
+          });
+        }
+        window.__cambriolageMpLeaveRoom = leaveRoom;
+
         function upsertRemotePlayer(playerId, state) {
           if (!playerId || playerId === bridge.localId) return;
           players.set(playerId, {
@@ -4955,6 +5285,7 @@
             x: Number(state && state.x),
             y: Number(state && state.y),
             r: Number(state && state.r) || 12,
+            loot: Number(state && state.loot) || 0,
             inCar: !!(state && state.inCar),
             hidden: !!(state && state.hidden),
             worldMode: state && state.worldMode ? String(state.worldMode) : "street",
@@ -5017,6 +5348,9 @@
             addLog("Room rejointe: " + res.roomCode);
           });
         });
+        if (leaveBtn) {
+          leaveBtn.addEventListener("click", () => leaveRoom(true));
+        }
 
         sendBtn.addEventListener("click", sendChat);
         chatInput.addEventListener("keydown", (ev) => {
@@ -5079,6 +5413,9 @@
         socket.on("action", (data) => {
           const action = data && data.type ? data.type : "inconnue";
           const playerId = data && data.playerId ? data.playerId : "?";
+          if (typeof window.__cambriolageMpOnAction === "function") {
+            window.__cambriolageMpOnAction(data);
+          }
           addLog("action recue (" + playerId + "): " + action);
         });
       })();

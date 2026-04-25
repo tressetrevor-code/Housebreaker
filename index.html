@@ -849,6 +849,10 @@
               <button id="mpJoinBtn" class="mpBtn" type="button">Rejoindre</button>
             </div>
             <p id="mpStatus" class="mpStatus">Hors ligne (pas de room).</p>
+            <div class="mpRow">
+              <input id="mpChatInput" class="mpInput" type="text" maxlength="140" placeholder="Message room..." />
+              <button id="mpSendBtn" class="mpBtn" type="button">Envoyer</button>
+            </div>
             <div id="mpLog" class="mpLog"></div>
             <div class="btnRow" style="margin-top: 10px">
               <button id="mpBackBtn" class="btn big" type="button">Retour</button>
@@ -2581,7 +2585,7 @@
 
         function getMpBridge() {
           const b = window.__cambriolageMpBridge;
-          if (!b || typeof b.sendMove !== "function") return null;
+          if (!b || typeof b.sendState !== "function") return null;
           return b;
         }
 
@@ -2611,7 +2615,7 @@
           if (!movedEnough && nowMs - mpLastSendAt < minDelayMs) return;
           if (nowMs - mpLastSendAt < minDelayMs) return;
 
-          bridge.sendMove(state);
+          bridge.sendState(state);
           mpLastSendAt = nowMs;
           mpLastSentState = state;
         }
@@ -3897,14 +3901,16 @@
           ctx.stroke();
 
           const bridge = getMpBridge();
-          const rp = bridge && bridge.remotePlayer ? bridge.remotePlayer : null;
-          if (rp && rp.worldMode === "house" && Number.isFinite(rp.x) && Number.isFinite(rp.y)) {
-            ctx.fillStyle = "rgba(232,140,255,0.9)";
-            ctx.beginPath();
-            ctx.arc(rp.x, rp.y, rp.r || player.r, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.strokeStyle = "rgba(0,0,0,0.35)";
-            ctx.stroke();
+          if (bridge && bridge.players && bridge.players.size > 0) {
+            for (const rp of bridge.players.values()) {
+              if (!rp || rp.worldMode !== "house" || !Number.isFinite(rp.x) || !Number.isFinite(rp.y)) continue;
+              ctx.fillStyle = rp.hidden ? "rgba(232,140,255,0.5)" : "rgba(232,140,255,0.9)";
+              ctx.beginPath();
+              ctx.arc(rp.x, rp.y, rp.r || player.r, 0, Math.PI * 2);
+              ctx.fill();
+              ctx.strokeStyle = "rgba(0,0,0,0.35)";
+              ctx.stroke();
+            }
           }
         }
 
@@ -4330,17 +4336,19 @@
           }
 
           const bridge = getMpBridge();
-          const rp = bridge && bridge.remotePlayer ? bridge.remotePlayer : null;
-          if (rp && rp.worldMode === "street" && Number.isFinite(rp.x) && Number.isFinite(rp.y)) {
-            if (rp.inCar) {
-              drawCar(rp.x, rp.y, "#d58cff", 0);
-            } else {
-              ctx.fillStyle = rp.hidden ? "rgba(213,140,255,0.45)" : "rgba(213,140,255,0.92)";
-              ctx.beginPath();
-              ctx.arc(rp.x, rp.y, rp.r || player.r, 0, Math.PI * 2);
-              ctx.fill();
-              ctx.strokeStyle = "rgba(0,0,0,0.35)";
-              ctx.stroke();
+          if (bridge && bridge.players && bridge.players.size > 0) {
+            for (const rp of bridge.players.values()) {
+              if (!rp || rp.worldMode !== "street" || !Number.isFinite(rp.x) || !Number.isFinite(rp.y)) continue;
+              if (rp.inCar) {
+                drawCar(rp.x, rp.y, "#d58cff", 0);
+              } else {
+                ctx.fillStyle = rp.hidden ? "rgba(213,140,255,0.45)" : "rgba(213,140,255,0.92)";
+                ctx.beginPath();
+                ctx.arc(rp.x, rp.y, rp.r || player.r, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = "rgba(0,0,0,0.35)";
+                ctx.stroke();
+              }
             }
           }
         }
@@ -4636,14 +4644,13 @@
       (() => {
         "use strict";
 
-        // Mets ici l'URL de ton backend Socket.IO:
-        // ex local: "http://localhost:3000"
-        // ex prod : "https://ton-backend.onrender.com"
-        const SERVER_URL = "https://TON-SERVEUR-BACKEND.com";
+        const SERVER_URL = "https://housebreaker.onrender.com";
 
         const createBtn = document.getElementById("mpCreateBtn");
         const joinBtn = document.getElementById("mpJoinBtn");
+        const sendBtn = document.getElementById("mpSendBtn");
         const roomInput = document.getElementById("mpRoomInput");
+        const chatInput = document.getElementById("mpChatInput");
         const statusEl = document.getElementById("mpStatus");
         const logEl = document.getElementById("mpLog");
 
@@ -4652,15 +4659,25 @@
           return;
         }
 
-        const socket = window.io(SERVER_URL, { transports: ["websocket"] });
+        const socket = window.io(SERVER_URL, {
+          transports: ["websocket"],
+          withCredentials: false,
+        });
+
         let currentRoom = "";
+        const players = new Map();
         const bridge = {
           connected: false,
           currentRoom: "",
-          remotePlayer: null,
-          sendMove(payload) {
+          localId: "",
+          players,
+          sendState(state) {
             if (!currentRoom) return;
-            socket.emit("move", payload);
+            socket.emit("player_state", { roomCode: currentRoom, state });
+          },
+          sendAction(payload) {
+            if (!currentRoom) return;
+            socket.emit("action", { roomCode: currentRoom, ...payload });
           },
         };
         window.__cambriolageMpBridge = bridge;
@@ -4677,15 +4694,54 @@
           statusEl.textContent = txt;
         }
 
+        function setRoom(roomCode) {
+          currentRoom = roomCode || "";
+          bridge.currentRoom = currentRoom;
+          players.clear();
+          if (currentRoom) {
+            roomInput.value = currentRoom;
+            setStatus("Room " + currentRoom + " connectee.");
+          } else {
+            setStatus("Hors ligne (pas de room).");
+          }
+        }
+
+        function upsertRemotePlayer(playerId, state) {
+          if (!playerId || playerId === bridge.localId) return;
+          players.set(playerId, {
+            id: playerId,
+            x: Number(state && state.x),
+            y: Number(state && state.y),
+            r: Number(state && state.r) || 12,
+            inCar: !!(state && state.inCar),
+            hidden: !!(state && state.hidden),
+            worldMode: state && state.worldMode ? String(state.worldMode) : "street",
+            t: state && state.t ? state.t : Date.now(),
+          });
+        }
+
+        function sendChat() {
+          if (!currentRoom) {
+            addLog("Rejoins une room pour chatter.");
+            return;
+          }
+          const txt = (chatInput.value || "").trim();
+          if (!txt) return;
+          socket.emit("chat_message", { roomCode: currentRoom, message: txt });
+          chatInput.value = "";
+        }
+
         socket.on("connect", () => {
           bridge.connected = true;
+          bridge.localId = socket.id;
           addLog("Connecte au serveur: " + socket.id);
+          setStatus(currentRoom ? "Room " + currentRoom + " connectee." : "Connecte. Cree ou rejoins une room.");
         });
 
         socket.on("disconnect", () => {
           bridge.connected = false;
-          bridge.currentRoom = "";
-          bridge.remotePlayer = null;
+          bridge.localId = "";
+          setRoom("");
           setStatus("Connexion perdue.");
           addLog("Deconnecte du serveur.");
         });
@@ -4696,11 +4752,8 @@
               addLog("Erreur creation room.");
               return;
             }
-            currentRoom = res.roomCode;
-            bridge.currentRoom = currentRoom;
-            roomInput.value = currentRoom;
-            setStatus("Room " + currentRoom + " (host)");
-            addLog("Room creee: " + currentRoom);
+            setRoom(res.roomCode);
+            addLog("Room creee: " + res.roomCode);
           });
         });
 
@@ -4715,20 +4768,33 @@
               addLog("Join refuse: " + (res && res.error ? res.error : "erreur"));
               return;
             }
-            currentRoom = res.roomCode;
-            bridge.currentRoom = currentRoom;
-            setStatus("Room " + currentRoom + " (joueur)");
-            addLog("Room rejointe: " + currentRoom);
+            setRoom(res.roomCode);
+            if (Array.isArray(res.players)) {
+              for (const p of res.players) upsertRemotePlayer(p.playerId, p.state);
+            }
+            addLog("Room rejointe: " + res.roomCode);
           });
         });
 
-        // Exemple d'evenement "action" synchronise:
-        // touche E => action dans la room.
+        sendBtn.addEventListener("click", sendChat);
+        chatInput.addEventListener("keydown", (ev) => {
+          if (ev.code === "Enter") {
+            ev.preventDefault();
+            sendChat();
+          }
+        });
+
         window.addEventListener("keydown", (ev) => {
           if (!currentRoom) return;
           if (ev.code === "KeyE") {
-            socket.emit("action", { type: "interact", t: Date.now() });
+            bridge.sendAction({ type: "interact", t: Date.now() });
           }
+        });
+
+        socket.on("room_players_snapshot", (data) => {
+          players.clear();
+          const list = Array.isArray(data && data.players) ? data.players : [];
+          for (const p of list) upsertRemotePlayer(p.playerId, p.state);
         });
 
         socket.on("room_update", (data) => {
@@ -4737,28 +4803,41 @@
         });
 
         socket.on("player_joined", (data) => {
-          addLog("Joueur rejoint: " + (data && data.playerId ? data.playerId : "?"));
+          if (data && data.playerId && data.playerId !== bridge.localId) {
+            addLog("Joueur connecte: " + data.playerId);
+          }
         });
 
         socket.on("player_left", (data) => {
-          addLog("Joueur parti: " + (data && data.playerId ? data.playerId : "?"));
+          const pid = data && data.playerId ? data.playerId : "";
+          if (pid) players.delete(pid);
+          addLog("Joueur deconnecte: " + (pid || "?"));
         });
 
-        // Reception des events de l'autre joueur:
+        socket.on("player_state", (data) => {
+          upsertRemotePlayer(data && data.playerId, data && data.state);
+        });
+
         socket.on("move", (data) => {
-          bridge.remotePlayer = {
-            x: Number(data && data.x),
-            y: Number(data && data.y),
-            r: Number(data && data.r) || 12,
-            inCar: !!(data && data.inCar),
-            hidden: !!(data && data.hidden),
-            worldMode: data && data.worldMode ? String(data.worldMode) : "street",
-            t: data && data.t ? data.t : Date.now(),
-          };
+          if (data && data.playerId && data.state) {
+            upsertRemotePlayer(data.playerId, data.state);
+            return;
+          }
+          if (!data) return;
+          const pid = data.playerId || "legacy";
+          upsertRemotePlayer(pid, data.state || data);
+        });
+
+        socket.on("chat_message", (data) => {
+          const playerId = data && data.playerId ? data.playerId : "?";
+          const msg = data && data.message ? String(data.message) : "";
+          addLog("[chat] " + playerId + ": " + msg);
         });
 
         socket.on("action", (data) => {
-          addLog("action recue: " + (data && data.type ? data.type : "inconnue"));
+          const action = data && data.type ? data.type : "inconnue";
+          const playerId = data && data.playerId ? data.playerId : "?";
+          addLog("action recue (" + playerId + "): " + action);
         });
       })();
     </script>
